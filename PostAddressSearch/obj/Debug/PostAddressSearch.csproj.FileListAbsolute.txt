@@ -1,0 +1,6 @@
+D:\Проекты\Visual Studio\PostAddressSearch\PostAddressSearch\bin\Debug\PostAddressSearch.exe
+D:\Проекты\Visual Studio\PostAddressSearch\PostAddressSearch\bin\Debug\PostAddressSearch.pdb
+D:\Проекты\Visual Studio\PostAddressSearch\PostAddressSearch\obj\Debug\PostAddressSearch.csproj.AssemblyReference.cache
+D:\Проекты\Visual Studio\PostAddressSearch\PostAddressSearch\obj\Debug\PostAddressSearch.csproj.CoreCompileInputs.cache
+D:\Проекты\Visual Studio\PostAddressSearch\PostAddressSearch\obj\Debug\PostAddressSearch.exe
+D:\Проекты\Visual Studio\PostAddressSearch\PostAddressSearch\obj\Debug\PostAddressSearch.pdb
