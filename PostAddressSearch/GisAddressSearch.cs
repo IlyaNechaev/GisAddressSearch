@@ -83,24 +83,58 @@ namespace GisAddressSearch
     {
         public static GisAddressLevel ConvertToGis(this FiasAddressLevel level)
         {
+            var levels = ((IEnumerable<FiasAddressLevel>)Enum.GetValues(typeof(FiasAddressLevel)))
+                .Where(l => (level & l) == l)
+                .ToArray();
+
             var reductDic = new Dictionary<FiasAddressLevel, string>();
             reductDic.Add(FiasAddressLevel.AO, Enum.GetName(typeof(FiasAddressLevel), FiasAddressLevel.Region));
+            reductDic.Add(FiasAddressLevel.SubAddTerritory, Enum.GetName(typeof(FiasAddressLevel), FiasAddressLevel.Street));
+            reductDic.Add(FiasAddressLevel.AddTerritory, Enum.GetName(typeof(FiasAddressLevel), FiasAddressLevel.PlanStructure));
 
-            var addressLevelName = string.Empty;
-            if (reductDic.ContainsKey(level))
+            var gisAddressLevels = ((IEnumerable<GisAddressLevel>)Enum.GetValues(typeof(GisAddressLevel)))
+                .ToDictionary(value => Enum.GetName(typeof(GisAddressLevel), value));
+
+            GisAddressLevel gisAddressLevel = 0;
+            foreach (var l in levels)
             {
-                addressLevelName = reductDic[level];
+                if (reductDic.ContainsKey(l))
+                {
+                    gisAddressLevel = gisAddressLevel | gisAddressLevels[reductDic[l]];
+                }
+                else
+                {
+                    gisAddressLevel = gisAddressLevel | gisAddressLevels[Enum.GetName(typeof(FiasAddressLevel), l)];
+                }
             }
-            else
-            {
-                addressLevelName = Enum.GetName(typeof(FiasAddressLevel), level);
-            }
-            var gisAddressLevel = ((IEnumerable<GisAddressLevel>)Enum.GetValues(typeof(GisAddressLevel)))
-                .FirstOrDefault(value => string.Equals(Enum.GetName(typeof(GisAddressLevel), value), addressLevelName));
 
             return gisAddressLevel;
         }
 
+        public static FiasAddressLevel ConvertMultipleToFias(this GisAddressLevel level, string stname = "")
+        {
+            var levels = ((IEnumerable<GisAddressLevel>)Enum.GetValues(typeof(GisAddressLevel)))
+                 .Where(l => (level & l) == l)
+                 .ToArray();
+
+            // У ГИС ПА уровни AO и Region объединены в Region и различаются только по приставке "АО"
+            var reductDic = new Dictionary<string, FiasAddressLevel>();
+            reductDic.Add("АО", FiasAddressLevel.AO);
+
+            var gisAddressLevels = ((IEnumerable<FiasAddressLevel>)Enum.GetValues(typeof(FiasAddressLevel)))
+                .ToDictionary(value => Enum.GetName(typeof(FiasAddressLevel), value));
+
+            FiasAddressLevel gisAddressLevel = reductDic.ContainsKey(stname) ? reductDic[stname] : 0;
+
+            foreach (var l in levels)
+            {
+                gisAddressLevel = gisAddressLevel | gisAddressLevels[Enum.GetName(typeof(GisAddressLevel), l)];
+            }
+
+            return gisAddressLevel;           
+        }
+
+        // level должен принимать только одно значение GisAddressLevel, поскольку 
         public static FiasAddressLevel ConvertToFias(this GisAddressLevel level, string stname = "")
         {
             var addressLevelName = Enum.GetName(typeof(GisAddressLevel), level);
@@ -428,7 +462,7 @@ namespace GisAddressSearch
 
         public string GetFullName()
         {
-            if (level == FiasAddressLevel.House)
+            if ((level & FiasAddressLevel.House) == FiasAddressLevel.House)
             {
                 return name +
                     (!string.IsNullOrEmpty(housings) ? $", к. {housings}" : string.Empty) +
@@ -489,7 +523,7 @@ namespace GisAddressSearch
                 return this;
             else
             {
-                if (parent  == null)
+                if (parent == null)
                     return null;
                 else
                     return parent.StartsWith(addressId);
@@ -505,10 +539,10 @@ namespace GisAddressSearch
                     fiasId.Equals(address.fiasId) &&
                     level == address.level &&
                     name.Equals(address.name) &&
-                    ((index  == null && address.index  == null) || index.Equals(address.index)) &&
-                    ((structure  == null && address.structure  == null) || structure.Equals(address.structure)) &&
-                    ((housings  == null && address.housings  == null) || housings.Equals(address.housings)) &&
-                    ((parent  == null && address.parent  == null) || parent.Equals(address.parent));
+                    ((index == null && address.index == null) || index.Equals(address.index)) &&
+                    ((structure == null && address.structure == null) || structure.Equals(address.structure)) &&
+                    ((housings == null && address.housings == null) || housings.Equals(address.housings)) &&
+                    ((parent == null && address.parent == null) || parent.Equals(address.parent));
 
                 return isEqual;
             }

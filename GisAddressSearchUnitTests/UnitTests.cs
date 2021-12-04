@@ -163,14 +163,14 @@ namespace GisAddressSearchUnitTests
         {
             yield return new object[] { "73b67e9d-4c88-44b2-9758-d7a367c4bc27", (int)FiasAddressLevel.House, "4, к. 2", true };
             yield return new object[] { "73b67e9d-4c88-44b2-9758-d7a367c4bc27", (int)FiasAddressLevel.House, "4, к. 5", false };
-            yield return new object[] { "0c5b2444-70a0-4932-980c-b4dc0d3f02b5", (int)FiasAddressLevel.Street, "Красностуденческий проезд", true };
-            yield return new object[] { "0c5b2444-70a0-4932-980c-b4dc0d3f02b5", (int)FiasAddressLevel.Street, "Красностудсенческий проезд", false };
+            yield return new object[] { "0c5b2444-70a0-4932-980c-b4dc0d3f02b5", (int)(FiasAddressLevel.Street | FiasAddressLevel.SubAddTerritory), "Красностуденческий проезд", true };
+            yield return new object[] { "0c5b2444-70a0-4932-980c-b4dc0d3f02b5", (int)(FiasAddressLevel.Street | FiasAddressLevel.SubAddTerritory), "Красностудсенческий проезд", false };
         }
 
         public static IEnumerable<object[]> SearchTestData()
         {
-            yield return new object[] { "Моск", (int)FiasAddressLevel.Region, "", new object[] { "Москва г", "Московская обл" } };
-            yield return new object[] { "Смол", (int)FiasAddressLevel.Street, "0c5b2444-70a0-4932-980c-b4dc0d3f02b5", 
+            yield return new object[] { "Моск", (int)(FiasAddressLevel.Region | FiasAddressLevel.AO), "", new object[] { "Москва г", "Московская обл" } };
+            yield return new object[] { "Смол", (int)(FiasAddressLevel.Street | FiasAddressLevel.SubAddTerritory), "0c5b2444-70a0-4932-980c-b4dc0d3f02b5", 
                 new object[] { "Смоленская ул", "Смоленская-Сенная пл", "Смоленский б-р", "Смольная ул", "Смоленская наб", "Смоленская пл" } };
         }
     }
