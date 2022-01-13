@@ -6,6 +6,8 @@ using System.Linq;
 using System.Net;
 using System.Runtime;
 using System.Text;
+using FiasCode;
+using GisAddressSearch;
 
 namespace GisAddressSearch
 {
@@ -81,7 +83,7 @@ namespace GisAddressSearch
 
     public static class GisFiasAddressExtensions
     {
-        public static GisAddressLevel ConvertToGis(this FiasAddressLevel level)
+        public static GisAddressLevel[] ConvertToGis(this FiasAddressLevel level)
         {
             var levels = ((IEnumerable<FiasAddressLevel>)Enum.GetValues(typeof(FiasAddressLevel)))
                 .Where(l => (level & l) == l)
@@ -95,46 +97,22 @@ namespace GisAddressSearch
             var gisAddressLevels = ((IEnumerable<GisAddressLevel>)Enum.GetValues(typeof(GisAddressLevel)))
                 .ToDictionary(value => Enum.GetName(typeof(GisAddressLevel), value));
 
-            GisAddressLevel gisAddressLevel = 0;
+            HashSet<GisAddressLevel> gisAddressLevel = new HashSet<GisAddressLevel>();
             foreach (var l in levels)
             {
                 if (reductDic.ContainsKey(l))
                 {
-                    gisAddressLevel = gisAddressLevel | gisAddressLevels[reductDic[l]];
+                    gisAddressLevel.Add(gisAddressLevels[reductDic[l]]);
                 }
                 else
                 {
-                    gisAddressLevel = gisAddressLevel | gisAddressLevels[Enum.GetName(typeof(FiasAddressLevel), l)];
+                    gisAddressLevel.Add(gisAddressLevels[Enum.GetName(typeof(FiasAddressLevel), l)]);
                 }
             }
 
-            return gisAddressLevel;
+            return gisAddressLevel.ToArray();
         }
 
-        public static FiasAddressLevel ConvertMultipleToFias(this GisAddressLevel level, string stname = "")
-        {
-            var levels = ((IEnumerable<GisAddressLevel>)Enum.GetValues(typeof(GisAddressLevel)))
-                 .Where(l => (level & l) == l)
-                 .ToArray();
-
-            // У ГИС ПА уровни AO и Region объединены в Region и различаются только по приставке "АО"
-            var reductDic = new Dictionary<string, FiasAddressLevel>();
-            reductDic.Add("АО", FiasAddressLevel.AO);
-
-            var gisAddressLevels = ((IEnumerable<FiasAddressLevel>)Enum.GetValues(typeof(FiasAddressLevel)))
-                .ToDictionary(value => Enum.GetName(typeof(FiasAddressLevel), value));
-
-            FiasAddressLevel gisAddressLevel = reductDic.ContainsKey(stname) ? reductDic[stname] : 0;
-
-            foreach (var l in levels)
-            {
-                gisAddressLevel = gisAddressLevel | gisAddressLevels[Enum.GetName(typeof(GisAddressLevel), l)];
-            }
-
-            return gisAddressLevel;           
-        }
-
-        // level должен принимать только одно значение GisAddressLevel, поскольку 
         public static FiasAddressLevel ConvertToFias(this GisAddressLevel level, string stname = "")
         {
             var addressLevelName = Enum.GetName(typeof(GisAddressLevel), level);
@@ -152,23 +130,31 @@ namespace GisAddressSearch
     {
         private string _mainUrl = "https://address.pochta.ru/suggest/api/v4_5";
         private string _childrenUrl = "https://address.pochta.ru/suggest/api/v4_5/children";
+        //private string _indexUrl = "https://www.pochta.ru/suggestions/v2/suggestion.find-addresses";
 
-        private string PerformGisRequest(string url, string data, string method)
+        private string _authToken;
+
+        public GisSearchService(string authToken)
+        {
+            _authToken = authToken;
+        }
+
+        private string PerformRequest(string url, string data)
         {
             ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
 
             var httpRequest = (HttpWebRequest)WebRequest.Create(url);
 
-            httpRequest.Method = method;
+            httpRequest.Method = "POST";
             httpRequest.ContentType = "application/json";
-            httpRequest.Headers["Authorization"] = "Bearer 4319be2a-2253-47b3-8944-0b69c7134d36";
+            httpRequest.Headers["Authorization"] = _authToken;
 
             using (var streamWriter = new StreamWriter(httpRequest.GetRequestStream()))
             {
                 streamWriter.Write(data);
             }
 
-            HttpWebResponse httpResponse = null;
+            HttpWebResponse httpResponse;
 
             try
             {
@@ -188,6 +174,28 @@ namespace GisAddressSearch
             return result;
         }
 
+        private TResult PerformGisRequest<TResult, TParam>(string url, TParam gisRequest) where TResult : class
+        {
+            var data = JsonHelper.Serialize(gisRequest);
+
+            var result = PerformRequest(url, data);
+
+            if (string.IsNullOrEmpty(result))
+                throw new WebException("Не удалось получить адрес", WebExceptionStatus.ReceiveFailure);
+
+            TResult gisResponse;
+            try
+            {
+                gisResponse = JsonHelper.Deserialize<TResult>(result);
+            }
+            catch
+            {
+                throw;
+            }
+
+            return gisResponse;
+        }
+
         // Получить адреса по его части
         public GisAddressSearchResponse GetAddress(string address)
         {
@@ -195,63 +203,82 @@ namespace GisAddressSearch
             {
                 appName = "ПК МС",
                 reqId = Guid.NewGuid().ToString(),
-                rmFedCities = false,
+                rmFedCities = true,
                 addr = address,
                 addressType = 1
             };
 
-            var data = JsonHelper.Serialize(gisRequest);
-
-            var result = PerformGisRequest(_mainUrl, data, "POST");
-
-            if (string.IsNullOrEmpty(result))
-                throw new WebException("Не удалось получить адрес", WebExceptionStatus.ReceiveFailure);
-
-            GisAddressSearchResponse gisResponse = new GisAddressSearchResponse();
-            try
-            {
-                gisResponse = JsonHelper.Deserialize<GisAddressSearchResponse>(result);
-            }
-            catch (Exception)
-            {
-                throw;
-            }
+            var gisResponse = PerformGisRequest<GisAddressSearchResponse, GisAddressSearchRequest>(_mainUrl, gisRequest);
 
             return gisResponse;
         }
 
-        public GisAddressChildrenSearchResponse GetAddressChildren(string addressId, int countOnPage = 300)
+        public GisAddressChildrenSearchResponse GetAddressChildren(string addressId, int? countOnPage = null, string address = null)
         {
-            var gisRequest = new GisAddressChildrenSearchRequest()
+            var gisResponse = new GisAddressChildrenSearchResponse();
+
+            // Если не задано количество запрашиваемых адресов, то необходимо запросить максимально возможное их количество
+            // (пока количество возвращаемых адресов перестанет увеличиваться)
+            if (countOnPage == null)
             {
-                appName = "ПК МС",
-                reqId = Guid.NewGuid().ToString(),
-                countOnPage = countOnPage,
-                parentGuid = addressId
-            };
+                var gisRequests = new GisAddressChildrenSearchRequest[2];
+                var gisResponses = new GisAddressChildrenSearchResponse[2];
 
-            var data = JsonHelper.Serialize(gisRequest);
+                countOnPage = 0;
 
-            var result = PerformGisRequest(_childrenUrl, data, "POST");
+                // Текущий запрос
+                gisRequests[0] = new GisAddressChildrenSearchRequest
+                {
+                    appName = "ПК МС",
+                    reqId = Guid.NewGuid().ToString(),
+                    countOnPage = 0,
+                    parentGuid = addressId,
+                    stringSrc = address
+                };
+                // Запрос, количество запрашиваемых адресов в котором на 500 больше чем в текущем
+                gisRequests[1] = new GisAddressChildrenSearchRequest
+                {
+                    appName = "ПК МС",
+                    reqId = Guid.NewGuid().ToString(),
+                    countOnPage = 0,
+                    parentGuid = addressId,
+                    stringSrc = address
+                };
 
-            if (string.IsNullOrEmpty(result))
-                throw new WebException("Не удалось получить адрес", WebExceptionStatus.ReceiveFailure);
+                do
+                {
+                    // С каждой итерацией количество запрашиваемых адресов будет увеличиваться на 500
+                    countOnPage += 500;
 
-            GisAddressChildrenSearchResponse gisResponse = new GisAddressChildrenSearchResponse();
-            try
-            {
-                gisResponse = JsonHelper.Deserialize<GisAddressChildrenSearchResponse>(result);
+                    gisRequests[0].countOnPage = countOnPage.Value;
+                    gisRequests[1].countOnPage = countOnPage.Value + 500;
+
+                    gisResponses[0] = PerformGisRequest<GisAddressChildrenSearchResponse, GisAddressChildrenSearchRequest>(_childrenUrl, gisRequests[0]);
+                    gisResponses[1] = PerformGisRequest<GisAddressChildrenSearchResponse, GisAddressChildrenSearchRequest>(_childrenUrl, gisRequests[1]);
+                }
+                while (gisResponses[0].children.Count < gisResponses[1].children.Count);
+
+                gisResponse = gisResponses[0];
             }
-            catch (Exception)
+            // Если задано количество запрашиваемых адресов
+            else
             {
-                throw;
+                var gisRequest = new GisAddressChildrenSearchRequest
+                {
+                    appName = "ПК МС",
+                    reqId = Guid.NewGuid().ToString(),
+                    countOnPage = countOnPage.Value,
+                    parentGuid = addressId
+                };
+
+                gisResponse = PerformGisRequest<GisAddressChildrenSearchResponse, GisAddressChildrenSearchRequest>(_childrenUrl, gisRequest);
             }
 
             return gisResponse;
         }
 
         // Получить список возможных значений элемента адреса
-        public FiasAddressPart[] GetAddressParts(string address, GisAddressLevel level, string parentId = "")
+        public GisAddressPart[] GetAddressParts(string address, GisAddressLevel[] level, string parentId = "")
         {
             try
             {
@@ -263,99 +290,330 @@ namespace GisAddressSearch
             }
 
             if (string.IsNullOrEmpty(address))
-                return new FiasAddressPart[0];
+                return new GisAddressPart[0];
 
-            IDictionary<Guid, FiasAddressPart> gisAddressParts = new Dictionary<Guid, FiasAddressPart>();
-            var fullAddress = address;
+            IDictionary<Guid, GisAddressPart> gisAddressParts = new Dictionary<Guid, GisAddressPart>();
 
-            if (!string.IsNullOrEmpty(parentId))
+            // Если ищем регион
+            if (level.Contains(GisAddressLevel.Region))
             {
-                fullAddress = $"{GetAddressPartById(parentId).name}, {address}";
-            }
-            else if (level != GisAddressLevel.Region)
-            {
-                return new FiasAddressPart[0];
-            }
-
-            var gisAddressResponse = GetAddress(fullAddress);
-            if (!string.IsNullOrEmpty(gisAddressResponse.errorCode) && gisAddressResponse.addr?.Count == 0)
-            {
-                throw new GisSearchException($"Не удалось получить адреса. ErrorCode: {gisAddressResponse.errorCode}");
-            }
-
-            foreach (var gisAddress in gisAddressResponse.addr)
-            {
-                var addressPart = GetAddressPart(gisAddress, level);
-
-                // Если элемент адреса уже не присутствует в коллекции, начинается с запрашиваемого названия (address) и
-                // имеет предка с parentId, то добавляем элемент в коллекцию
-                if (addressPart != null &&
-                    !gisAddressParts.ContainsKey(addressPart.fiasId) &&
-                    addressPart.GetFullName().ToLower().StartsWith(address.ToLower()) &&
-                    (string.IsNullOrEmpty(parentId) || addressPart.StartsWith(new Guid(parentId)) != null))
+                GisAddressSearchResponse gisAddressResponse;
+                try
                 {
-                    gisAddressParts.Add(addressPart.fiasId, addressPart);
+                    gisAddressResponse = GetAddress(address);
                 }
+                catch (GisSearchException)
+                {
+                    throw;
+                }
+
+                if (!string.IsNullOrEmpty(gisAddressResponse.errorCode) && gisAddressResponse.addr?.Count == 0)
+                {
+                    throw new GisSearchException($"Не удалось получить адреса. ErrorCode: {gisAddressResponse.errorCode}");
+                }
+
+                foreach (var gisAddress in gisAddressResponse.addr)
+                {
+                    var addressPart = GetAddressPart(gisAddress, level);
+
+                    // Если элемент адреса уже не присутствует в коллекции, начинается с запрашиваемого названия (address), то добавляем элемент в коллекцию
+                    if (addressPart != null &&
+                        !gisAddressParts.ContainsKey(addressPart.fiasId) &&
+                        addressPart.GetFullName().ToLower().StartsWith(address.ToLower()))
+                    {
+                        gisAddressParts.Add(addressPart.fiasId, addressPart);
+                    }
+                }
+            }
+            else if (!string.IsNullOrEmpty(parentId))
+            {
+                var gisResponse = GetAddressChildren(parentId, null, address);
+
+                if (!string.IsNullOrEmpty(gisResponse.errorCode) && gisResponse.children?.Count == 0)
+                {
+                    throw new GisSearchException($"Не удалось получить адреса. ErrorCode: {gisResponse.errorCode}");
+                }
+
+                foreach (var gisAddress in gisResponse.children)
+                {
+                    var addressPart = GetAddressPart(gisAddress, level);
+
+                    if (addressPart != null &&
+                        addressPart.GetFullName().StartsWith(address, StringComparison.CurrentCultureIgnoreCase))
+                    {
+                        gisAddressParts.Add(addressPart.fiasId, addressPart);
+                    }
+                }
+            }
+            else
+            {
+                return new GisAddressPart[0];
             }
 
             return gisAddressParts.Values.ToArray();
         }
 
-        private FiasAddressPart GetAddressPartById(string addressId)
+        public GisAddressPart SearchPostalCodeElement(string postalCode)
         {
-            var gisResponse = GetAddressChildren(addressId, 1);
+            var request = new GisAddressSearchRequest
+            {
+                appName = "ПК МС",
+                reqId = Guid.NewGuid().ToString(),
+                addressType = 1,
+                rmFedCities = true,
+                addr = postalCode
+            };
 
-            if (gisResponse.children.Count < 1)
-                return null;
+            var response = PerformGisRequest<GisAddressSearchResponse, GisAddressSearchRequest>(_mainUrl, request);
 
-            var fiasAddressPart = GetAddressPart(gisResponse.children[0], (GisAddressLevel)gisResponse.children[0].level);
-            var addressPart = fiasAddressPart.StartsWith(new Guid(addressId));
+            var addresses = new GisAddressPart[response.addr.Count];
 
-            return addressPart;
+            // В данном случае словарь выполняет роль дерева, в котором соединены 
+            // узлы элементов адресов (в качестве ключа используется предок, а в качестве значения все его потомки)
+            var distinctAddresses = new Dictionary<Guid, HashSet<Guid>>();
+            GisAddressPart tempAddress;
+
+            for (int i = 0; i < response.addr.Count; i++)
+            {
+                addresses[i] = GetAddressPart(response.addr[i], null);
+
+                tempAddress = addresses[i];
+                while (tempAddress.parent != null)
+                {
+                    if (distinctAddresses.ContainsKey(tempAddress.parent.id))
+                    {
+                        var children = distinctAddresses[tempAddress.parent.id];
+                        if (!children.Contains(tempAddress.id))
+                        {
+                            children.Add(tempAddress.id);
+                        }
+                    }
+                    else
+                    {
+                        distinctAddresses.Add(tempAddress.parent.id, new HashSet<Guid> { tempAddress.id });
+                    }
+                    tempAddress = tempAddress.parent;
+                }
+            }
+
+            tempAddress = addresses[0];
+            while (tempAddress.parent != null)
+            {
+                tempAddress = tempAddress.parent;
+            }
+
+            var tempGuid = tempAddress.id;
+            while (distinctAddresses[tempGuid].Count == 1)
+            {
+                tempGuid = distinctAddresses[tempGuid].Single();
+            }
+
+            GisAddressPart result = null;
+            foreach (var address in addresses)
+            {
+                result = address.StartsWith(tempGuid);
+                if (result != null)
+                    break;
+            }
+            return result;
         }
 
-        private FiasAddressPart GetAddressPart(GisAddress address, GisAddressLevel level)
+        public FiasCode.KladrAddress GetKladrAddressByElements(string addressId)
         {
+            var address = GetAddressById(addressId);
+            var addressPart = GetAddressPart(address, null);
 
+            var addressParts = addressPart.GetAllParts();
+
+            #region Building
+
+            var currentHouse = addressParts.FirstOrDefault(part => part.level.Equals(FiasAddressLevel.House));
+
+            string building = null;
+            if (currentHouse != null)
+            {
+                building = string.IsNullOrEmpty(currentHouse.housings) ? string.Empty : currentHouse.housings;
+                building += string.IsNullOrEmpty(currentHouse.structure) ? string.Empty : $"СТР{currentHouse.structure}";
+            }
+
+            #endregion
+
+            #region City
+
+            var city = addressParts.FirstOrDefault(part => part.level.Equals(FiasAddressLevel.City))?.name.ToUpper();
+
+            #endregion
+
+            #region District
+
+            var district = addressParts.FirstOrDefault(part => part.level.Equals(FiasAddressLevel.District))?.name.ToUpper();
+
+            #endregion
+
+            #region House
+
+            var house = addressParts.FirstOrDefault(part => part.level.Equals(FiasAddressLevel.House))?.name;
+
+            if (!string.IsNullOrEmpty(house))
+            {
+                // Если элемент является владением или домовладением
+                if (house.ToLower().Contains("влд"))
+                {
+                    house = house.Replace(". ", "");
+                }
+
+                house = house.ToUpper();
+            }
+
+            #endregion
+
+            #region Index
+
+            string index = null;
+            if (!string.IsNullOrEmpty(address.index))
+            {
+                // Уровни адреса, у которых не должен считываться почтовый индекс
+                var levelsWithoutIndex = new HashSet<FiasAddressLevel>
+                {
+                    FiasAddressLevel.Region,
+                    FiasAddressLevel.City
+                };
+
+                if (!levelsWithoutIndex.Contains(addressPart.level))
+                    index = address.index;
+            }
+
+            #endregion
+
+            #region Locality
+
+            var locality = addressParts.FirstOrDefault(part => part.level.Equals(FiasAddressLevel.IntraArea))?.name.ToUpper() ??
+                           addressParts.FirstOrDefault(part => part.level.Equals(FiasAddressLevel.Locality))?.name.ToUpper();
+
+            #endregion
+
+            #region RegionCode
+
+            string regionCode = null;
+
+            #endregion
+
+            #region Street
+
+            var street = addressParts.FirstOrDefault(part => part.level.Equals(FiasAddressLevel.Street))?.name.ToUpper() ??
+                         addressParts.FirstOrDefault(part => part.level.Equals(FiasAddressLevel.PlanStructure))?.name.ToUpper();
+
+            #endregion
+
+
+            var kladr = new KladrAddress
+            {
+                AddressString = null,
+                Building = building,
+                City = city,
+                CountryCode = "643",
+                District = district,
+                House = house,
+                Index = index,
+                Locality = locality,
+                RegionCode = regionCode,
+                Street = street
+            };
+
+            kladr.AddressString = string.Concat(
+                string.IsNullOrEmpty(kladr.CountryCode) ? string.Empty : kladr.CountryCode, ",",
+                string.IsNullOrEmpty(kladr.Index) ? string.Empty : kladr.Index, ",",
+                string.IsNullOrEmpty(kladr.RegionCode) ? string.Empty : kladr.RegionCode, ",",
+                string.IsNullOrEmpty(kladr.District) ? string.Empty : kladr.District, ",",
+                string.IsNullOrEmpty(kladr.City) ? string.Empty : kladr.City, ",",
+                string.IsNullOrEmpty(kladr.Locality) ? string.Empty : kladr.Locality, ",",
+                string.IsNullOrEmpty(kladr.Street) ? string.Empty : kladr.Street, ",",
+                string.IsNullOrEmpty(kladr.House) ? string.Empty : kladr.House, ",",
+                string.IsNullOrEmpty(kladr.Building) ? string.Empty : kladr.Building, ","
+                );
+
+            return kladr;
+        }
+
+        private GisAddress GetAddressById(string addressId)
+        {
+            try
+            {
+                new Guid(addressId);
+            }
+            catch
+            {
+                throw;
+            }
+
+            var gisRequest = new GisAddressSearchRequest
+            {
+                appName = "ПК МС",
+                reqId = Guid.NewGuid().ToString(),
+                addressType = 1,
+                rmFedCities = true,
+                guid = addressId,
+                addr = null
+            };
+
+            var gisResponse = PerformGisRequest<GisAddressSearchResponse, GisAddressSearchRequest>(_mainUrl, gisRequest);
+
+            return gisResponse.addr[0];
+        }
+
+        private GisAddressPart GetAddressPart(GisAddress address, GisAddressLevel[] level)
+        {
+            int[] intLevels = level?.Select(l => (int)l).ToArray();
             int indexOfElement = -1;
             for (int i = 0; i < address.elements.Count; i++)
             {
-                if (address.elements[i].level == (int)level)
+                // Определяем индекс элемента адреса, уровень которого совпадает с любым уровнем level
+                if (intLevels?.Contains(address.elements[i].level) ?? false)
                 {
                     indexOfElement = i;
                     break;
                 }
             }
-            if (indexOfElement == -1) return null;
+            if (level == null) indexOfElement = address.elements.Count - 1;
+            else if (indexOfElement == -1) return null;
 
-            var addressPart = new FiasAddressPart();
+            var addressPart = new GisAddressPart();
             addressPart.FromAddress(address, indexOfElement);
 
             return addressPart;
-        }
-
-        private GisAddressElement GetAddressElement(string elementId)
-        {
-            throw new NotImplementedException();
         }
     }
 
 
     public class GisAddressSearchRequest
     {
-        public GisAddressSearchRequest()
-        {
-            appName = string.Empty;
-            reqId = string.Empty;
-            rmFedCities = false;
-            addr = string.Empty;
-            addressType = 1;
-        }
+        /// <summary>
+        /// Имя и версия Сервиса Подсказок
+        /// </summary>
         public string appName { get; set; }
         public string reqId { get; set; }
+        /// <summary>
+        /// Из итоговой строки адреса, удалять дублирующиеся название городов федерального значения 
+        /// </summary>
         public bool rmFedCities { get; set; }
         public string addr { get; set; }
         public int addressType { get; set; }
+
+        public string outLang { get; set; }
+        public bool outOriginalEng { get; set; }
+        public List<string> searchRange { get; set; }
+        public List<string> missElements { get; set; }
+        public List<int> searchLevelRange { get; set; }
+        public List<int> missLevels { get; set; }
+        public List<string> guidsRestr { get; set; }
+        public List<string> indexRestr { get; set; }
+        public bool woFlat { get; set; }
+        public bool withPhantomFlats { get; set; }
+        public string guid { get; set; }
+        public int origin { get; set; } = 1;
+        public int historical { get; set; } = 1;
+        public List<string> geoProperties { get; set; }
+
     }
 
     public class GisAddressChildrenSearchRequest
@@ -372,6 +630,9 @@ namespace GisAddressSearch
         public int countOnPage { get; set; }
         public string parentGuid { get; set; }
 
+        public int firstElemNum { get; set; }
+        public string childGuid { get; set; }
+        public string stringSrc { get; set; }
     }
 
     public class GisAddressSearchResponse
@@ -394,8 +655,9 @@ namespace GisAddressSearch
     public class GisAddressChildrenSearchResponse
     {
         public string appName { get; set; }
-        public Guid reqId { get; set; }
+        public string reqId { get; set; }
         public int firstElemNum { get; set; }
+        public string errorCode { get; set; }
         public bool isEnd { get; set; }
         public GisAddressChildrenSearchRequest request { get; set; }
         public List<GisAddress> children { get; set; }
@@ -418,6 +680,32 @@ namespace GisAddressSearch
         public int origin { get; set; }
         public int level { get; set; }
         public List<GisAddressElement> elements { get; set; }
+
+        //public FiasAddress ToFiasAddress()
+        //{
+        //    new FiasAddress()
+        //    {
+        //        ClassificationCode = null,
+        //        Housings = null,
+        //        Id = null,
+        //        IdAddressElement = null,
+        //        IdRequest = null,
+        //        IntCode = null,
+        //        Level = null,
+        //        Name = null,
+        //        OKATO = null,
+        //        OKTMO = null,
+        //        OwningCode = null,
+        //        Parent = null,
+        //        PostCode = null,
+        //        ShortName = null,
+        //        SortOrder = null,
+        //        Structure = null,
+        //        StructureCode = null,
+        //        Type = null,
+        //        TypeCode = null
+        //    }
+        //}
     }
 
     public class GisAddressElement
@@ -433,10 +721,12 @@ namespace GisAddressSearch
         public int level { get; set; }
     }
 
-    public class FiasAddressPart
+    public class GisAddressPart
     {
-        public Guid id;
         public Guid fiasId;
+        // id дублирует fiasId, поскольку у ГИС ПА в отличие от ФИАС нет
+        // идентификатора элемента адреса, но в ССД он используется
+        public Guid id;
 
         public FiasAddressLevel level;
 
@@ -446,13 +736,12 @@ namespace GisAddressSearch
         public string structure;
         public string housings;
 
-        public FiasAddressPart parent;
+        public GisAddressPart parent;
 
-        public FiasAddressPart()
+        public GisAddressPart()
         {
-            id = new Guid();
             fiasId = new Guid();
-            level = FiasAddressLevel.AllLevels;
+            level = 0;
             name = string.Empty;
             index = null;
             structure = null;
@@ -462,7 +751,7 @@ namespace GisAddressSearch
 
         public string GetFullName()
         {
-            if ((level & FiasAddressLevel.House) == FiasAddressLevel.House)
+            if (level == FiasAddressLevel.House)
             {
                 return name +
                     (!string.IsNullOrEmpty(housings) ? $", к. {housings}" : string.Empty) +
@@ -474,6 +763,15 @@ namespace GisAddressSearch
             }
         }
 
+        public string GetFullAddress()
+        {
+            var address = parent == null ? string.Empty : parent.GetFullAddress();
+
+            address += $", {GetFullName()}";
+
+            return address;
+        }
+
         public void FromAddress(GisAddress address, int indexOfElement)
         {
             var element = address.elements[indexOfElement];
@@ -481,7 +779,6 @@ namespace GisAddressSearch
             name = level == FiasAddressLevel.House ? element.val : element.valWithType;
             fiasId = new Guid(element.guid);
             id = fiasId;
-
 
             if ((GisAddressLevel)element.level == GisAddressLevel.House)
             {
@@ -511,13 +808,13 @@ namespace GisAddressSearch
             }
             else
             {
-                parent = new FiasAddressPart();
+                parent = new GisAddressPart();
                 parent.FromAddress(address, indexOfElement - 1);
             }
         }
 
         // Возвращает часть адреса, fiasId которой равен addressId, и всех предков
-        public FiasAddressPart StartsWith(Guid addressId)
+        public GisAddressPart StartsWith(Guid addressId)
         {
             if (fiasId.Equals(addressId))
                 return this;
@@ -530,13 +827,92 @@ namespace GisAddressSearch
             }
         }
 
+        public GisAddressPart[] GetAllParts()
+        {
+            if (parent == null)
+            {
+                return new GisAddressPart[] { this };
+            }
+            else
+            {
+                var addressParts = parent.GetAllParts();
+                var newAddressParts = new GisAddressPart[addressParts.Length + 1];
+
+                addressParts.CopyTo(newAddressParts, 0);
+                newAddressParts[newAddressParts.Length - 1] = this;
+
+                return newAddressParts;
+            }
+        }
+
+        //static public void writeTo(GisAddressPart gisAddressPart, TextWriter writer)
+        //{
+
+        //    writer.Write("{\"id\":\"" + gisAddressPart.id + "\"");
+
+        //    writer.Write(",\"fiasId\":\"" + gisAddressPart.fiasId + "\"");
+
+        //    writer.Write(",\"level\":");
+        //    writer.Write((int)gisAddressPart.level);
+
+        //    writer.Write(",\"name\":\"");
+        //    writer.Write(gisAddressPart.name != null ? JSONUtil.EscapeString(gisAddressPart.name) : "");
+        //    writer.Write("\"");
+
+
+        //    writer.Write(",\"index\":");
+        //    if (gisAddressPart.index != null)
+        //    {
+        //        writer.Write("\"" + gisAddressPart.index + "\"");
+        //    }
+        //    else
+        //    {
+        //        writer.Write("null");
+        //    }
+
+        //    writer.Write(",\"parent\":");
+        //    if (gisAddressPart.parent != null)
+        //    {
+        //        writeTo(gisAddressPart.parent, writer);
+        //    }
+        //    else
+        //    {
+        //        writer.Write("null");
+        //    }
+
+        //    if (gisAddressPart.level == FiasAddressLevel.House)
+        //    {
+
+        //        writer.Write(",\"structure\":");
+        //        if (gisAddressPart.structure != null)
+        //        {
+        //            writer.Write("\"" + gisAddressPart.structure + "\"");
+        //        }
+        //        else
+        //        {
+        //            writer.Write("null");
+        //        }
+
+        //        writer.Write(",\"housings\":");
+        //        if (gisAddressPart.housings != null)
+        //        {
+        //            writer.Write("\"" + gisAddressPart.housings + "\"");
+        //        }
+        //        else
+        //        {
+        //            writer.Write("null");
+        //        }
+        //    }
+
+        //    writer.Write("}");
+        //}
+
         public override bool Equals(object obj)
         {
-            if (obj is FiasAddressPart)
+            if (obj is GisAddressPart)
             {
-                var address = (FiasAddressPart)obj;
-                bool isEqual = (id == address.id) &&
-                    fiasId.Equals(address.fiasId) &&
+                var address = (GisAddressPart)obj;
+                bool isEqual = fiasId.Equals(address.fiasId) &&
                     level == address.level &&
                     name.Equals(address.name) &&
                     ((index == null && address.index == null) || index.Equals(address.index)) &&
@@ -553,10 +929,664 @@ namespace GisAddressSearch
         }
     }
 
+    public class GisPostalCodeSearchRequest
+    {
+        string query { get; set; }
+        int limit { get; set; }
+        string fromBound { get; set; }
+
+        public GisPostalCodeSearchRequest(string postalCode)
+        {
+            query = postalCode;
+            limit = 10;
+            fromBound = "CITY";
+        }
+
+        public GisPostalCodeSearchRequest(string postalCode, int limit)
+        {
+            query = postalCode;
+            this.limit = limit;
+            fromBound = "CITY";
+        }
+
+        public GisPostalCodeSearchRequest(string postalCode, string bound)
+        {
+            query = postalCode;
+            limit = 10;
+            fromBound = bound;
+        }
+
+        public GisPostalCodeSearchRequest(string postalCode, int limit, string bound)
+        {
+            query = postalCode;
+            this.limit = limit;
+            fromBound = bound;
+        }
+    }
+
     public class GisSearchException : Exception
     {
         public GisSearchException(string message) : base(message)
         {
+        }
+    }
+}
+
+namespace FiasCode
+{
+    public partial class FiasAddress
+    {
+
+        private string classificationCodeField;
+
+        private string housingsField;
+
+        private string idField;
+
+        private int idAddressElementField;
+
+        private bool idAddressElementFieldSpecified;
+
+        private System.Nullable<int> idRequestField;
+
+        private bool idRequestFieldSpecified;
+
+        private int intCodeField;
+
+        private bool intCodeFieldSpecified;
+
+        private System.Nullable<FiasAddressLevel> levelField;
+
+        private bool levelFieldSpecified;
+
+        private string nameField;
+
+        private string oKATOField;
+
+        private string oKTMOField;
+
+        private System.Nullable<int> owningCodeField;
+
+        private bool owningCodeFieldSpecified;
+
+        private System.Nullable<int> parentField;
+
+        private bool parentFieldSpecified;
+
+        private string postCodeField;
+
+        private string shortNameField;
+
+        private System.Nullable<short> sortOrderField;
+
+        private bool sortOrderFieldSpecified;
+
+        private string structureField;
+
+        private System.Nullable<int> structureCodeField;
+
+        private bool structureCodeFieldSpecified;
+
+        private string typeField;
+
+        private System.Nullable<int> typeCodeField;
+
+        private bool typeCodeFieldSpecified;
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 0)]
+        public string ClassificationCode
+        {
+            get
+            {
+                return this.classificationCodeField;
+            }
+            set
+            {
+                this.classificationCodeField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 1)]
+        public string Housings
+        {
+            get
+            {
+                return this.housingsField;
+            }
+            set
+            {
+                this.housingsField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 2)]
+        public string Id
+        {
+            get
+            {
+                return this.idField;
+            }
+            set
+            {
+                this.idField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(Order = 3)]
+        public int IdAddressElement
+        {
+            get
+            {
+                return this.idAddressElementField;
+            }
+            set
+            {
+                this.idAddressElementField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlIgnoreAttribute()]
+        public bool IdAddressElementSpecified
+        {
+            get
+            {
+                return this.idAddressElementFieldSpecified;
+            }
+            set
+            {
+                this.idAddressElementFieldSpecified = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 4)]
+        public System.Nullable<int> IdRequest
+        {
+            get
+            {
+                return this.idRequestField;
+            }
+            set
+            {
+                this.idRequestField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlIgnoreAttribute()]
+        public bool IdRequestSpecified
+        {
+            get
+            {
+                return this.idRequestFieldSpecified;
+            }
+            set
+            {
+                this.idRequestFieldSpecified = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(Order = 5)]
+        public int IntCode
+        {
+            get
+            {
+                return this.intCodeField;
+            }
+            set
+            {
+                this.intCodeField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlIgnoreAttribute()]
+        public bool IntCodeSpecified
+        {
+            get
+            {
+                return this.intCodeFieldSpecified;
+            }
+            set
+            {
+                this.intCodeFieldSpecified = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 6)]
+        public System.Nullable<FiasAddressLevel> Level
+        {
+            get
+            {
+                return this.levelField;
+            }
+            set
+            {
+                this.levelField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlIgnoreAttribute()]
+        public bool LevelSpecified
+        {
+            get
+            {
+                return this.levelFieldSpecified;
+            }
+            set
+            {
+                this.levelFieldSpecified = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 7)]
+        public string Name
+        {
+            get
+            {
+                return this.nameField;
+            }
+            set
+            {
+                this.nameField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 8)]
+        public string OKATO
+        {
+            get
+            {
+                return this.oKATOField;
+            }
+            set
+            {
+                this.oKATOField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 9)]
+        public string OKTMO
+        {
+            get
+            {
+                return this.oKTMOField;
+            }
+            set
+            {
+                this.oKTMOField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 10)]
+        public System.Nullable<int> OwningCode
+        {
+            get
+            {
+                return this.owningCodeField;
+            }
+            set
+            {
+                this.owningCodeField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlIgnoreAttribute()]
+        public bool OwningCodeSpecified
+        {
+            get
+            {
+                return this.owningCodeFieldSpecified;
+            }
+            set
+            {
+                this.owningCodeFieldSpecified = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 11)]
+        public System.Nullable<int> Parent
+        {
+            get
+            {
+                return this.parentField;
+            }
+            set
+            {
+                this.parentField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlIgnoreAttribute()]
+        public bool ParentSpecified
+        {
+            get
+            {
+                return this.parentFieldSpecified;
+            }
+            set
+            {
+                this.parentFieldSpecified = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 12)]
+        public string PostCode
+        {
+            get
+            {
+                return this.postCodeField;
+            }
+            set
+            {
+                this.postCodeField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 13)]
+        public string ShortName
+        {
+            get
+            {
+                return this.shortNameField;
+            }
+            set
+            {
+                this.shortNameField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 14)]
+        public System.Nullable<short> SortOrder
+        {
+            get
+            {
+                return this.sortOrderField;
+            }
+            set
+            {
+                this.sortOrderField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlIgnoreAttribute()]
+        public bool SortOrderSpecified
+        {
+            get
+            {
+                return this.sortOrderFieldSpecified;
+            }
+            set
+            {
+                this.sortOrderFieldSpecified = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 15)]
+        public string Structure
+        {
+            get
+            {
+                return this.structureField;
+            }
+            set
+            {
+                this.structureField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 16)]
+        public System.Nullable<int> StructureCode
+        {
+            get
+            {
+                return this.structureCodeField;
+            }
+            set
+            {
+                this.structureCodeField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlIgnoreAttribute()]
+        public bool StructureCodeSpecified
+        {
+            get
+            {
+                return this.structureCodeFieldSpecified;
+            }
+            set
+            {
+                this.structureCodeFieldSpecified = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 17)]
+        public string Type
+        {
+            get
+            {
+                return this.typeField;
+            }
+            set
+            {
+                this.typeField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 18)]
+        public System.Nullable<int> TypeCode
+        {
+            get
+            {
+                return this.typeCodeField;
+            }
+            set
+            {
+                this.typeCodeField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlIgnoreAttribute()]
+        public bool TypeCodeSpecified
+        {
+            get
+            {
+                return this.typeCodeFieldSpecified;
+            }
+            set
+            {
+                this.typeCodeFieldSpecified = value;
+            }
+        }
+    }
+
+    public partial class KladrAddress
+    {
+
+        private string addressStringField;
+
+        private string buildingField;
+
+        private string cityField;
+
+        private string countryCodeField;
+
+        private string districtField;
+
+        private string houseField;
+
+        private string indexField;
+
+        private string localityField;
+
+        private string regionCodeField;
+
+        private string streetField;
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 0)]
+        public string AddressString
+        {
+            get
+            {
+                return this.addressStringField;
+            }
+            set
+            {
+                this.addressStringField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 1)]
+        public string Building
+        {
+            get
+            {
+                return this.buildingField;
+            }
+            set
+            {
+                this.buildingField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 2)]
+        public string City
+        {
+            get
+            {
+                return this.cityField;
+            }
+            set
+            {
+                this.cityField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 3)]
+        public string CountryCode
+        {
+            get
+            {
+                return this.countryCodeField;
+            }
+            set
+            {
+                this.countryCodeField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 4)]
+        public string District
+        {
+            get
+            {
+                return this.districtField;
+            }
+            set
+            {
+                this.districtField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 5)]
+        public string House
+        {
+            get
+            {
+                return this.houseField;
+            }
+            set
+            {
+                this.houseField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 6)]
+        public string Index
+        {
+            get
+            {
+                return this.indexField;
+            }
+            set
+            {
+                this.indexField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 7)]
+        public string Locality
+        {
+            get
+            {
+                return this.localityField;
+            }
+            set
+            {
+                this.localityField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 8)]
+        public string RegionCode
+        {
+            get
+            {
+                return this.regionCodeField;
+            }
+            set
+            {
+                this.regionCodeField = value;
+            }
+        }
+
+        /// <remarks/>
+        [System.Xml.Serialization.XmlElementAttribute(IsNullable = true, Order = 9)]
+        public string Street
+        {
+            get
+            {
+                return this.streetField;
+            }
+            set
+            {
+                this.streetField = value;
+            }
         }
     }
 }

@@ -1,6 +1,7 @@
 using System;
 using Xunit;
 using GisAddressSearch;
+using FiasCode;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -12,14 +13,17 @@ namespace GisAddressSearchUnitTests
 
         public UnitTests()
         {
-            addressService = new();
+            var authToken = "Bearer 4319be2a-2253-47b3-8944-0b69c7134d36";
+
+            addressService = new(authToken);
         }
 
         [Fact]
         public void Get_Only_One_Address()
         {
-            var addressParts = addressService.GetAddressParts("Красностуденческий п", GisAddressLevel.Street, "0c5b2444-70a0-4932-980c-b4dc0d3f02b5");
-            var fiasAddressParts = addressService.GetAddressParts("Красностуденческий проезд", GisAddressLevel.Street, "0c5b2444-70a0-4932-980c-b4dc0d3f02b5");
+            var levels = new GisAddressLevel[] { GisAddressLevel.Street };
+            var addressParts = addressService.GetAddressParts("Красностуденческий п", levels, "0c5b2444-70a0-4932-980c-b4dc0d3f02b5");
+            var fiasAddressParts = addressService.GetAddressParts("Красностуденческий проезд", levels, "0c5b2444-70a0-4932-980c-b4dc0d3f02b5");
 
             var address = Assert.Single(addressParts);
             var fiasAddress = Assert.Single(fiasAddressParts);
@@ -31,7 +35,7 @@ namespace GisAddressSearchUnitTests
         [Fact]
         public void Get_Address_Houses()
         {
-            var fiasAddressStreet = new FiasAddressPart()
+            var fiasAddressStreet = new GisAddressPart()
             {
                 fiasId = new Guid("73b67e9d-4c88-44b2-9758-d7a367c4bc27"),
                 id = new Guid("73b67e9d-4c88-44b2-9758-d7a367c4bc27"),
@@ -45,7 +49,7 @@ namespace GisAddressSearchUnitTests
                     name = "Москва г"
                 }
             };
-            var fiasAddresses = new List<FiasAddressPart>()
+            var fiasAddresses = new List<GisAddressPart>()
             {
                 new()
                 {
@@ -89,7 +93,8 @@ namespace GisAddressSearchUnitTests
                 }
             };
 
-            var addressParts = addressService.GetAddressParts("4", GisAddressLevel.House, "73b67e9d-4c88-44b2-9758-d7a367c4bc27").ToList();
+            var levels = new GisAddressLevel[] { GisAddressLevel.House };
+            var addressParts = addressService.GetAddressParts("4", levels, "73b67e9d-4c88-44b2-9758-d7a367c4bc27").ToList();
 
             foreach (var addr in addressParts)
             {
@@ -104,7 +109,8 @@ namespace GisAddressSearchUnitTests
         [MemberData(nameof(HousesTestData))]
         public void Get_Address_Houses_With_Only_Number(string houseNumber, string streetId, string[] houses)
         {
-            var addressParts = addressService.GetAddressParts(houseNumber, GisAddressLevel.House, streetId).Select(addr => addr.GetFullName()).ToList();
+            var levels = new GisAddressLevel[] { GisAddressLevel.House };
+            var addressParts = addressService.GetAddressParts(houseNumber, levels, streetId).Select(addr => addr.GetFullName()).ToList();
             houses = houses.Select(h => h.Trim()).ToArray();
 
             foreach (var house in houses)
@@ -148,14 +154,77 @@ namespace GisAddressSearchUnitTests
             }
         }
 
+        [Theory]
+        [MemberData(nameof(ConvertTestData))]
+        public void Check_Convertion(HashSet<GisAddressLevel> gisLevels, HashSet<FiasAddressLevel> fiasLevels)
+        {
+            FiasAddressLevel fiasLevel = 0;
+            foreach (var l in fiasLevels)
+            {
+                fiasLevel = fiasLevel | l;
+            }
+
+            Assert.Equal(gisLevels, fiasLevel.ConvertToGis().ToHashSet());
+
+            foreach (var l in gisLevels)
+            {
+                Assert.Contains(l.ConvertToFias(), fiasLevels);
+            }
+        }
+
+        [Theory]
+        [MemberData(nameof(HouseTestData))]
+        public void Check_Increase_Count_On_Page(string request, GisAddressLevel[] gisLevels, string parentId, string[] results)
+        {
+            var addressParts = addressService.GetAddressParts(request, gisLevels, parentId);
+            var addresses = addressParts.Select(ap => ap.GetFullName());
+
+            foreach (var result in results)
+            {
+                Assert.Contains(result, addresses);
+            }
+        }
+
+        [Theory(DisplayName = "КЛАДР")]
+        [MemberData(nameof(KladrTestData))]
+        public void Check_Kladr(string addressId, KladrAddress resultKladr, string resultString)
+        {
+            var result = addressService.GetKladrAddressByElements(addressId);
+
+            if (resultKladr is not null)
+            {
+                Assert.Equal(result.AddressString, resultKladr.AddressString);
+                Assert.Equal(result.Building, resultKladr.Building);
+                Assert.Equal(result.City, resultKladr.City);
+                Assert.Equal(result.District, resultKladr.District);
+                Assert.Equal(result.House, resultKladr.House);
+                Assert.Equal(result.Index, resultKladr.Index);
+                Assert.Equal(result.Locality, resultKladr.Locality);
+                Assert.Equal(result.Street, resultKladr.Street);
+            }
+            else
+            {
+                Assert.Equal(result.AddressString, resultString);
+            }
+        }
+
+        [Theory]
+        [MemberData(nameof(PostalCodeData))]
+        public void Check_Postal_Code_Search(string postalCode, string id)
+        {
+            var addressParts = addressService.SearchPostalCodeElement(postalCode);
+
+            Assert.Equal(addressParts.id.ToString(), id);
+        }
+
         public static IEnumerable<object[]> HousesTestData()
         {
             yield return new object[] { "4", "73b67e9d-4c88-44b2-9758-d7a367c4bc27", 
                 new object[] { "4", "4, к. 2", "4, стр. 2", "4, к. 2, стр. 1" } };
             yield return new object[] { "2", "25dcbf42-f6a0-4744-8166-6e5ec03bfa79", 
-                new object[] { "2", "2А", "2Б", "2Д", "2, к. 1", "2, стр. 2", "2, стр. 4", "2, стр. 5", "2, стр. 6", "2А, стр. 1" } };
-            yield return new object[] { "3", "4b1fd1ed-6e22-4a33-857b-ccebb07020e1", 
-                new object[] { "3А", "3Б", "31", "31А", "37", "37А", "39А", "3, стр. 1", "3, стр. 2", "3, стр. 3" } };
+                new object[] { "2", "2А", "2Б", "2Д", "2, к. 1", "2, к. 1, стр. 1", "2, стр. 2", "2, стр. 4", "2, стр. 5", "2, стр. 6", "2А, стр. 1", "2А, стр. 2", "2А, стр. 3" } };
+            /*yield return new object[] { "3", "4b1fd1ed-6e22-4a33-857b-ccebb07020e1", 
+                new object[] { "3А", "3Б", "31", "31А", "37", "37А", "39А", "3, стр. 1", "3, стр. 2", "3, стр. 3" } };*/
             yield return new object[] { "7", "0c5b2444-70a0-4932-980c-b4dc0d3f02b5", new object[0] };
         }
 
@@ -172,6 +241,80 @@ namespace GisAddressSearchUnitTests
             yield return new object[] { "Моск", (int)(FiasAddressLevel.Region | FiasAddressLevel.AO), "", new object[] { "Москва г", "Московская обл" } };
             yield return new object[] { "Смол", (int)(FiasAddressLevel.Street | FiasAddressLevel.SubAddTerritory), "0c5b2444-70a0-4932-980c-b4dc0d3f02b5", 
                 new object[] { "Смоленская ул", "Смоленская-Сенная пл", "Смоленский б-р", "Смольная ул", "Смоленская наб", "Смоленская пл" } };
+            yield return new object[] { "4", (int)FiasAddressLevel.House, "d30ffc84-9b62-42e9-ac95-a63499103c1a", 
+                new object[] { "4", "41", "41а", "43", "47", "49", "49а", "4а", "4б" } };
+        }
+
+        public static IEnumerable<object[]> ConvertTestData()
+        {
+            yield return new object[] { new HashSet<GisAddressLevel> { GisAddressLevel.City, GisAddressLevel.District }, 
+            new HashSet<FiasAddressLevel> { FiasAddressLevel.City, FiasAddressLevel.District } };
+
+            yield return new object[] { new HashSet<GisAddressLevel> { GisAddressLevel.City, GisAddressLevel.Locality }, 
+            new HashSet<FiasAddressLevel> { FiasAddressLevel.City, FiasAddressLevel.Locality } };
+
+            yield return new object[] { new HashSet<GisAddressLevel> { GisAddressLevel.PlanStructure, GisAddressLevel.House }, 
+            new HashSet<FiasAddressLevel> { FiasAddressLevel.PlanStructure, FiasAddressLevel.House } };
+        }
+
+        public static IEnumerable<object[]> HouseTestData()
+        {
+            yield return new object[]
+            {
+                "5",
+                new GisAddressLevel[] { GisAddressLevel.House },
+                "fcbf0d82-176c-473f-80bb-b4048d03f9a0",
+                new object[] { "55, к. 1" }
+            };
+            yield return new object[]
+            {
+                "61",
+                new GisAddressLevel[] { GisAddressLevel.House },
+                "fcbf0d82-176c-473f-80bb-b4048d03f9a0",
+                new object[] { "61, к. 3А" }
+            };
+        }
+
+        public static IEnumerable<object[]> KladrTestData()
+        {
+            yield return new object[]
+            {
+                "f24926cc-7b05-40e2-8a59-a872618d18bb",
+                null,
+                "643,,,,КАЛУГА Г,,МАКСИМА ГОРЬКОГО УЛ,1Б,,"
+            };
+            yield return new object[]
+            {
+                "b502ae45-897e-4b6f-9776-6ff49740b537",
+                null,
+                "643,,,,КАЛУГА Г,,,,,"
+            };
+            yield return new object[]
+            {
+                "17075b0b-7375-4e9a-8928-a636709f4fc0",
+                null,
+                "643,108830,,ВОРОНОВСКОЕ П,,,420 КВ-Л,,,"
+            };
+            yield return new object[]
+            {
+                "f1c72b9d-a2d7-45b7-b9f5-2222c12d5164",
+                null,
+                "643,613310,,ВЕРХОШИЖЕМСКИЙ Р-Н,,МОСКВА Д,,,,"
+            };
+        }
+    
+        public static IEnumerable<object[]> PostalCodeData()
+        {
+            yield return new object[]
+            {
+                "127434",
+                "0c5b2444-70a0-4932-980c-b4dc0d3f02b5"
+            };
+            yield return new object[]
+            {
+                "248000",
+                "b502ae45-897e-4b6f-9776-6ff49740b537"
+            };
         }
     }
 }

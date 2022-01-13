@@ -12,7 +12,9 @@ namespace GisAddressSearch
         
         public void ProcessRequest(HttpContext context)
         {
-            var addressService = new GisSearchService();
+            var authToken = "Bearer 4319be2a-2253-47b3-8944-0b69c7134d36";
+
+            var addressService = new GisSearchService(authToken);
             string url = "fias/address/0/search.aspx";
             var path = url.Split('/');
 

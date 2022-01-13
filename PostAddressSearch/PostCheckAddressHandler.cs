@@ -50,11 +50,14 @@ namespace GisAddressSearch
 
         public void SendUsingRequest()
         {
-            var gisSearchService = new GisSearchService();
-            FiasAddressPart[] addresses = null;
+            var authToken = "Bearer 4319be2a-2253-47b3-8944-0b69c7134d36";
+
+            var gisSearchService = new GisSearchService(authToken);
+            GisAddressPart[] addresses = null;
             try
             {
-                addresses = gisSearchService.GetAddressParts("3, к. 3", GisAddressLevel.House, "a4e0b9b0-eb84-42ec-8bb8-758facbbf4dd");
+                var levels = new GisAddressLevel[] { GisAddressLevel.House };
+                addresses = gisSearchService.GetAddressParts("3, к. 3", levels, "a4e0b9b0-eb84-42ec-8bb8-758facbbf4dd");
             }
             catch (GisSearchException ex)
             {
