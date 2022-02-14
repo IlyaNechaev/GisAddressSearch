@@ -100,3 +100,9 @@ D:\Проекты\Visual Studio\PostAddressSearch\GisAddressSearchUnitTests\obj\
 D:\Проекты\Visual Studio\PostAddressSearch\GisAddressSearchUnitTests\obj\Debug\net5.0\ref\GisAddressSearchUnitTests.dll
 D:\Проекты\Visual Studio\PostAddressSearch\GisAddressSearchUnitTests\obj\Debug\net5.0\GisAddressSearchUnitTests.pdb
 D:\Проекты\Visual Studio\PostAddressSearch\GisAddressSearchUnitTests\obj\Debug\net5.0\GisAddressSearchUnitTests.genruntimeconfig.cache
+D:\Проекты\Visual Studio\PostAddressSearch\GisAddressSearchUnitTests\bin\Debug\net5.0\System.Data.SqlClient.dll
+D:\Проекты\Visual Studio\PostAddressSearch\GisAddressSearchUnitTests\bin\Debug\net5.0\runtimes\win-arm64\native\sni.dll
+D:\Проекты\Visual Studio\PostAddressSearch\GisAddressSearchUnitTests\bin\Debug\net5.0\runtimes\win-x64\native\sni.dll
+D:\Проекты\Visual Studio\PostAddressSearch\GisAddressSearchUnitTests\bin\Debug\net5.0\runtimes\win-x86\native\sni.dll
+D:\Проекты\Visual Studio\PostAddressSearch\GisAddressSearchUnitTests\bin\Debug\net5.0\runtimes\unix\lib\netcoreapp2.1\System.Data.SqlClient.dll
+D:\Проекты\Visual Studio\PostAddressSearch\GisAddressSearchUnitTests\bin\Debug\net5.0\runtimes\win\lib\netcoreapp2.1\System.Data.SqlClient.dll

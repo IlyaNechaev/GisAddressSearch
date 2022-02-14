@@ -10,14 +10,15 @@
         "projectUniqueName": "D:\\Проекты\\Visual Studio\\PostAddressSearch\\GisAddressSearchUnitTests\\GisAddressSearchUnitTests.csproj",
         "projectName": "GisAddressSearchUnitTests",
         "projectPath": "D:\\Проекты\\Visual Studio\\PostAddressSearch\\GisAddressSearchUnitTests\\GisAddressSearchUnitTests.csproj",
-        "packagesPath": "C:\\Users\\Илья\\.nuget\\packages\\",
+        "packagesPath": "C:\\Users\\ilian\\.nuget\\packages\\",
         "outputPath": "D:\\Проекты\\Visual Studio\\PostAddressSearch\\GisAddressSearchUnitTests\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
-          "C:\\Program Files\\dotnet\\sdk\\NuGetFallbackFolder"
+          "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
         ],
         "configFilePaths": [
-          "C:\\Users\\Илья\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Users\\ilian\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.FallbackLocation.config",
           "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
         ],
         "originalTargetFrameworks": [
@@ -51,6 +52,10 @@
               "target": "Package",
               "version": "[16.9.4, )"
             },
+            "System.Data.SqlClient": {
+              "target": "Package",
+              "version": "[4.8.3, )"
+            },
             "coverlet.collector": {
               "include": "Runtime, Build, Native, ContentFiles, Analyzers, BuildTransitive",
               "suppressParent": "All",
@@ -83,7 +88,7 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\5.0.400\\RuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\6.0.101\\RuntimeIdentifierGraph.json"
         }
       }
     },
@@ -91,7 +96,12 @@
       "restore": {
         "projectUniqueName": "D:\\Проекты\\Visual Studio\\PostAddressSearch\\PostAddressSearch\\PostAddressSearch.csproj",
         "projectName": "PostAddressSearch",
-        "projectPath": "D:\\Проекты\\Visual Studio\\PostAddressSearch\\PostAddressSearch\\PostAddressSearch.csproj"
+        "projectPath": "D:\\Проекты\\Visual Studio\\PostAddressSearch\\PostAddressSearch\\PostAddressSearch.csproj",
+        "frameworks": {
+          "net35": {
+            "projectReferences": {}
+          }
+        }
       },
       "frameworks": {
         "net35": {}

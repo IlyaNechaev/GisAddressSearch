@@ -60,25 +60,41 @@ namespace GisAddressSearch
     }
     public enum GisAddressLevel
     {
-        /// <remarks/>
+        /// <remarks>Регион</remarks>
         Region = 1,
 
-        /// <remarks/>
+        /// <remarks>Автономный округ (устаревшее)</remarks>
+        AO = 2,
+
+        /// <remarks>Район</remarks>
         District = 3,
 
-        /// <remarks/>
+        /// <remarks>Город</remarks>
         City = 4,
 
-        /// <remarks/>
+        /// <remarks>Внутригородская территория (устаревшее)</remarks>
+        IntraArea = 5,
+
+        /// <remarks>Населенный пункт</remarks>
         Locality = 6,
 
-        /// <remarks/>
+        /// <remarks>Улица</remarks>
         Street = 7,
 
-        /// <remarks/>
+        /// <remarks>Здание, сооружение</remarks>
         House = 8,
 
-        PlanStructure = 65
+        /// <remarks>Помещение</remarks>
+        Flat = 9,
+
+        /// <remarks>Городские и сельские поселения</remarks>
+        Settlements = 35,
+
+        /// <remarks>Планировочная структура</remarks>
+        PlanStructure = 65,
+
+        /// <remarks>Земельный участок</remarks>
+        LandPlot = 75
     }
 
     public static class GisFiasAddressExtensions
@@ -89,6 +105,9 @@ namespace GisAddressSearch
                 .Where(l => (level & l) == l)
                 .ToArray();
 
+            // Словарь, в котором хранятся следующие пары элементов
+            // [Key]: устаревшие адресные уровни
+            // [Value]: уровни, которые используются в ГИС ПА (вместо устаревших)
             var reductDic = new Dictionary<FiasAddressLevel, string>();
             reductDic.Add(FiasAddressLevel.AO, Enum.GetName(typeof(FiasAddressLevel), FiasAddressLevel.Region));
             reductDic.Add(FiasAddressLevel.SubAddTerritory, Enum.GetName(typeof(FiasAddressLevel), FiasAddressLevel.Street));
@@ -128,15 +147,28 @@ namespace GisAddressSearch
 
     public class GisSearchService
     {
-        private string _mainUrl = "https://address.pochta.ru/suggest/api/v4_5";
-        private string _childrenUrl = "https://address.pochta.ru/suggest/api/v4_5/children";
-        //private string _indexUrl = "https://www.pochta.ru/suggestions/v2/suggestion.find-addresses";
+        #region URLs
+
+        // URL адреса сервиса ГИС ПА
+        private string _mainUrl;
+        private string _childrenUrl;
+
+        #endregion
 
         private string _authToken;
 
-        public GisSearchService(string authToken)
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="authToken">Bearer-токен для аутентификации при использовании сервиса ГИС ПА</param>
+        /// <param name="mainUrl">Основной URL для доступа к сервису ГИС ПА</param>
+        /// <param name="childrenUrl">URL для доступа к методу получения чилдренов (дочерних элементов адреса)</param>
+        public GisSearchService(string authToken, string mainUrl, string childrenUrl)
         {
-            _authToken = authToken;
+            _authToken = authToken.Contains("Bearer") ? authToken : "Bearer " + authToken.Trim();
+
+            _mainUrl = mainUrl;
+            _childrenUrl = childrenUrl;
         }
 
         private string PerformRequest(string url, string data)
@@ -177,6 +209,10 @@ namespace GisAddressSearch
         private TResult PerformGisRequest<TResult, TParam>(string url, TParam gisRequest) where TResult : class
         {
             var data = JsonHelper.Serialize(gisRequest);
+
+            // Замена производится, поскольку при передаче в параметре stringSrc последовательности "/" или "\/"
+            // запрос возвращает Internal server error. В случае с "\\/" запрос возвращает корректный ответ
+            data = data.Replace("/", @"\/");
 
             var result = PerformRequest(url, data);
 
@@ -338,7 +374,8 @@ namespace GisAddressSearch
                 {
                     var addressPart = GetAddressPart(gisAddress, level);
 
-                    if (addressPart != null &&
+                    if (addressPart != null && 
+                        !gisAddressParts.ContainsKey(addressPart.fiasId) &&
                         addressPart.GetFullName().StartsWith(address, StringComparison.CurrentCultureIgnoreCase))
                     {
                         gisAddressParts.Add(addressPart.fiasId, addressPart);
@@ -432,35 +469,79 @@ namespace GisAddressSearch
             return result;
         }
 
-        public FiasCode.KladrAddress GetKladrAddressByElements(string addressId)
+        /// <summary>
+        /// Возвращает адрес в формате КЛАДР
+        /// </summary>
+        /// <param name="addressId">Идентификатор адреса в ФИАС</param>
+        /// <param name="getRegionCode">Функция, возвращающая код региона по его идентификатору</param>
+        /// <returns></returns>
+        public FiasCode.KladrAddress GetKladrAddressByElements(string addressId, Func<string, string> getRegionCode = null)
         {
+            var kladrFiasDict = new Dictionary<string, FiasAddressLevel>();
+            kladrFiasDict.Add(nameof(KladrAddress.District),  FiasAddressLevel.District);
+            kladrFiasDict.Add(nameof(KladrAddress.City),  FiasAddressLevel.City);
+            kladrFiasDict.Add(nameof(KladrAddress.Locality),  FiasAddressLevel.IntraArea | FiasAddressLevel.Locality);
+            kladrFiasDict.Add(nameof(KladrAddress.Street),  FiasAddressLevel.Street | FiasAddressLevel.PlanStructure);
+
             var address = GetAddressById(addressId);
             var addressPart = GetAddressPart(address, null);
 
             var addressParts = addressPart.GetAllParts();
 
-            #region Building
+            #region Index
 
-            var currentHouse = addressParts.FirstOrDefault(part => part.level.Equals(FiasAddressLevel.House));
-
-            string building = null;
-            if (currentHouse != null)
+            string index = null;
+            if (!string.IsNullOrEmpty(address.index))
             {
-                building = string.IsNullOrEmpty(currentHouse.housings) ? string.Empty : currentHouse.housings;
-                building += string.IsNullOrEmpty(currentHouse.structure) ? string.Empty : $"СТР{currentHouse.structure}";
+                // Уровни адреса, у которых не должен считываться почтовый индекс
+                var levelsWithoutIndex = new HashSet<FiasAddressLevel>
+                {
+                    FiasAddressLevel.Region,
+                    FiasAddressLevel.City
+                };
+
+                if (!levelsWithoutIndex.Contains(addressPart.level))
+                    index = address.index;
             }
 
             #endregion
 
-            #region City
+            #region RegionCode
 
-            var city = addressParts.FirstOrDefault(part => part.level.Equals(FiasAddressLevel.City))?.name.ToUpper();
+            string regionCode = null;
+            if (getRegionCode != null)
+            {
+                try
+                {
+                    var regionId = GetAddressPart(address, GisAddressLevel.Region).id.ToString();
+                    regionCode = getRegionCode?.Invoke(regionId);
+                }
+                catch { }
+            }
 
             #endregion
 
             #region District
 
-            var district = addressParts.FirstOrDefault(part => part.level.Equals(FiasAddressLevel.District))?.name.ToUpper();
+            var district = addressParts.FirstOrDefault(part => (part.level & kladrFiasDict[nameof(KladrAddress.District)]) == part.level)?.name.ToUpper();
+
+            #endregion
+
+            #region City
+
+            var city = addressParts.FirstOrDefault(part => (part.level & kladrFiasDict[nameof(KladrAddress.City)]) == part.level)?.name.ToUpper();
+
+            #endregion
+
+            #region Locality
+
+            var locality = addressParts.FirstOrDefault(part => (part.level & kladrFiasDict[nameof(KladrAddress.Locality)]) == part.level)?.name.ToUpper();
+
+            #endregion
+
+            #region Street
+
+            var street = addressParts.FirstOrDefault(part => (part.level & kladrFiasDict[nameof(KladrAddress.Street)]) == part.level)?.name.ToUpper();
 
             #endregion
 
@@ -481,41 +562,16 @@ namespace GisAddressSearch
 
             #endregion
 
-            #region Index
+            #region Building
 
-            string index = null;
-            if (!string.IsNullOrEmpty(address.index))
+            var currentHouse = addressParts.FirstOrDefault(part => part.level.Equals(FiasAddressLevel.House));
+
+            string building = null;
+            if (currentHouse != null)
             {
-                // Уровни адреса, у которых не должен считываться почтовый индекс
-                var levelsWithoutIndex = new HashSet<FiasAddressLevel>
-                {
-                    FiasAddressLevel.Region,
-                    FiasAddressLevel.City
-                };
-
-                if (!levelsWithoutIndex.Contains(addressPart.level))
-                    index = address.index;
+                building = string.IsNullOrEmpty(currentHouse.housings) ? string.Empty : currentHouse.housings;
+                building += string.IsNullOrEmpty(currentHouse.structure) ? string.Empty : $"СТР{currentHouse.structure}";
             }
-
-            #endregion
-
-            #region Locality
-
-            var locality = addressParts.FirstOrDefault(part => part.level.Equals(FiasAddressLevel.IntraArea))?.name.ToUpper() ??
-                           addressParts.FirstOrDefault(part => part.level.Equals(FiasAddressLevel.Locality))?.name.ToUpper();
-
-            #endregion
-
-            #region RegionCode
-
-            string regionCode = null;
-
-            #endregion
-
-            #region Street
-
-            var street = addressParts.FirstOrDefault(part => part.level.Equals(FiasAddressLevel.Street))?.name.ToUpper() ??
-                         addressParts.FirstOrDefault(part => part.level.Equals(FiasAddressLevel.PlanStructure))?.name.ToUpper();
 
             #endregion
 
@@ -523,15 +579,15 @@ namespace GisAddressSearch
             var kladr = new KladrAddress
             {
                 AddressString = null,
-                Building = building,
-                City = city,
                 CountryCode = "643",
-                District = district,
-                House = house,
                 Index = index,
-                Locality = locality,
                 RegionCode = regionCode,
-                Street = street
+                District = district,
+                City = city,
+                Locality = locality,
+                Street = street,
+                House = house,
+                Building = building
             };
 
             kladr.AddressString = string.Concat(
@@ -576,7 +632,7 @@ namespace GisAddressSearch
             return gisResponse.addr[0];
         }
 
-        private GisAddressPart GetAddressPart(GisAddress address, GisAddressLevel[] level)
+        private GisAddressPart GetAddressPart(GisAddress address, params GisAddressLevel[] level)
         {
             int[] intLevels = level?.Select(l => (int)l).ToArray();
             int indexOfElement = -1;
@@ -598,7 +654,6 @@ namespace GisAddressSearch
             return addressPart;
         }
     }
-
 
     public class GisAddressSearchRequest
     {

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Data.SqlClient;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -9,48 +10,44 @@ namespace GisAddressSearch
 {
     class Program
     {
-        string _authToken = "Bearer 4319be2a-2253-47b3-8944-0b69c7134d36";
+        static string authToken = "Bearer 4319be2a-2253-47b3-8944-0b69c7134d36";
+        static string mainUrl = "https://address.pochta.ru/suggest/api/v4_5";
+        static string childrenUrl = "https://address.pochta.ru/suggest/api/v4_5/children";
 
         static void Main(string[] args)
         {
-            
+            var gisService = new GisSearchService(authToken, mainUrl, childrenUrl);
 
+            var kladr = gisService.GetKladrAddressByElements("0bc1452a-6566-4f5d-b25f-4d4d51beb78a", GetRegionCode);
 
+            Console.WriteLine("643,424032,12,Йошкар-Ола г,,Милосердие снт,2-я линия,27,,6");
+            Console.WriteLine(kladr.AddressString);
+
+            Console.ReadKey();
         }
 
-        private string PerformGisRequest(string url, string data, string method)
+        public static string GetRegionCode(string fiasId)
         {
-            ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
+            var code = string.Empty;
+            var connectionString = "Persist Security Info=False;Server=localhost\\SQLEXPRESS;Database=GisPaTest;Trusted_Connection=True;";
 
-            var httpRequest = (HttpWebRequest)WebRequest.Create(url);
-
-            httpRequest.Method = method;
-            httpRequest.ContentType = "application/json";
-            httpRequest.Headers["Authorization"] = _authToken;
-
-            using (var streamWriter = new StreamWriter(httpRequest.GetRequestStream()))
+            using (var connection = new SqlConnection(connectionString))
             {
-                streamWriter.Write(data);
+                connection.Open();
+                using (var command = connection.CreateCommand())
+                {
+                    command.CommandText = $"select top 1 [Code] from RegionCode where FiasId = \'{fiasId}\'";
+                    var reader = command.ExecuteReader();
+
+                    if (reader.Read())
+                    {
+                        code = reader.GetByte(0).ToString();
+                    }
+                }
+                connection.Close();
             }
 
-            HttpWebResponse httpResponse;
-
-            try
-            {
-                httpResponse = (HttpWebResponse)httpRequest.GetResponse();
-            }
-            catch (WebException)
-            {
-                throw;
-            }
-
-            var result = string.Empty;
-            using (var streamReader = new StreamReader(httpResponse.GetResponseStream()))
-            {
-                result = streamReader.ReadToEnd();
-            }
-
-            return result;
+            return code;
         }
     }
 }
