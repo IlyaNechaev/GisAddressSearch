@@ -144,7 +144,7 @@ namespace GisAddressSearch
             ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
 
             var httpRequest = (HttpWebRequest)WebRequest.Create(url);
-
+            
             httpRequest.Method = "POST";
             httpRequest.ContentType = "application/json";
             httpRequest.Headers["Authorization"] = _authToken;
@@ -196,7 +196,7 @@ namespace GisAddressSearch
             return gisResponse;
         }
 
-        // Получить адреса по его части
+        // Запрос адреса у ГИС ПА
         public GisAddressSearchResponse GetAddress(string address)
         {
             var gisRequest = new GisAddressSearchRequest
@@ -212,7 +212,7 @@ namespace GisAddressSearch
 
             return gisResponse;
         }
-
+         // Запрос всех потомков элемента адреса у ГИС ПА
         public GisAddressChildrenSearchResponse GetAddressChildren(string addressId, int? countOnPage = null, string address = null)
         {
             var gisResponse = new GisAddressChildrenSearchResponse();
@@ -366,18 +366,26 @@ namespace GisAddressSearch
 
             var response = PerformGisRequest<GisAddressSearchResponse, GisAddressSearchRequest>(_mainUrl, request);
 
-            var addresses = new GisAddressPart[response.addr.Count];
+            var addresses = new List<GisAddressPart>(response.addr.Count);
 
-            // В данном случае словарь выполняет роль дерева, в котором соединены 
-            // узлы элементов адресов (в качестве ключа используется предок, а в качестве значения все его потомки)
+            // Словарь выполняет роль дерева, в котором соединены узлы элементов адресов
+            // (в качестве ключа используется предок, а в качестве значения все его потомки)
             var distinctAddresses = new Dictionary<Guid, HashSet<Guid>>();
             GisAddressPart tempAddress;
 
-            for (int i = 0; i < response.addr.Count; i++)
+            foreach (var addr in response.addr)
             {
-                addresses[i] = GetAddressPart(response.addr[i], null);
+                try
+                {
+                    addresses.Add(GetAddressPart(addr, null));
+                }
+                catch (FormatException)
+                {
+                    continue;
+                }
 
-                tempAddress = addresses[i];
+                tempAddress = addresses.Last();
+
                 while (tempAddress.parent != null)
                 {
                     if (distinctAddresses.ContainsKey(tempAddress.parent.id))
@@ -396,6 +404,12 @@ namespace GisAddressSearch
                 }
             }
 
+            if (addresses.Count == 0)
+            {
+                throw new GisSearchException("Не удалось получить адрес");
+            }
+
+            // Ищем элемент адреса с наибольшим уровнем (корень дерева)
             tempAddress = addresses[0];
             while (tempAddress.parent != null)
             {
@@ -403,7 +417,7 @@ namespace GisAddressSearch
             }
 
             var tempGuid = tempAddress.id;
-            while (distinctAddresses[tempGuid].Count == 1)
+            while (distinctAddresses.ContainsKey(tempGuid) && distinctAddresses[tempGuid].Count == 1)
             {
                 tempGuid = distinctAddresses[tempGuid].Single();
             }
@@ -534,6 +548,7 @@ namespace GisAddressSearch
 
             return kladr;
         }
+
 
         private GisAddress GetAddressById(string addressId)
         {

@@ -315,6 +315,26 @@ namespace GisAddressSearchUnitTests
                 "248000",
                 "b502ae45-897e-4b6f-9776-6ff49740b537"
             };
+            yield return new object[]
+            {
+                "613310",
+                "0b940b96-103f-4248-850c-26b6c7296728"
+            };
+            yield return new object[]
+            {
+                "613115",
+                "0b940b96-103f-4248-850c-26b6c7296728"
+            };
+            yield return new object[]
+            {
+                "103426",
+                "57dbff54-7a35-4d5a-ad70-11585bfd5221"
+            };
+            yield return new object[]
+            {
+                "600000",
+                "f66a00e6-179e-4de9-8ecb-78b0277c9f10"
+            };
         }
     }
 }
